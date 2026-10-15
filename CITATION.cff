@@ -1,0 +1,26 @@
+﻿cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "TEUMA MBEZI"
+    given-names: "Michel"
+    email: "3michelteuma@gmail.com"
+title: "Multi-Agent Chemical Analyzer with Uncertainty Quantification"
+version: 2.0.0
+date-released: 2026-10-15
+url: "https://github.com/FullMichel-Lab/chem-agents.git"    
+
+abstract: >
+  A LangGraph-based multi-agent system for molecular property prediction,
+  structural optimization, and uncertainty quantification. The system
+  orchestrates four specialized agents (data retrieval, descriptor computation,
+  property prediction, optimization suggestion) with PubChem anchoring and
+  conformal prediction for uncertainty intervals.
+keywords:
+  - agentic AI
+  - LangGraph
+  - multi-agent system
+  - molecular property prediction
+  - uncertainty quantification
+  - conformal prediction
+  - cheminformatics
+license: MIT
