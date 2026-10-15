@@ -7,7 +7,7 @@ authors:
 title: "Multi-Agent Chemical Analyzer with Uncertainty Quantification"
 version: 2.0.0
 date-released: 2026-10-15
-url: "https://github.com/FullMichel-Lab/chem-agents.git"    
+url: "https://github.com/FullMichel-Lab/chem-agents-v2"    
 
 abstract: >
   A LangGraph-based multi-agent system for molecular property prediction,
