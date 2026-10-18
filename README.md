@@ -2,7 +2,7 @@
 
 A LangGraph-based multi-agent system for molecular property prediction,
 structural optimization, and uncertainty quantification.
-
+[![DOI](https://zenodo.org/badge/1420893489.svg)](https://doi.org/10.5281/zenodo.23447573)
 ## Overview
 
 This project implements a Supervisor architecture in LangGraph where a
