@@ -144,12 +144,12 @@ def run_analysis(query: str) -> dict:
 
 
 def run_optimization(smiles: str, target_property: str) -> dict:
-    """Run the optimization workflow with PubChem similarity."""
+    """Exécute le workflow d'optimisation avec similarité PubChem."""
     from rdkit import Chem
     
     start_time = time.time()
     
-    # Validate SMILES
+    # Validation du SMILES
     if Chem.MolFromSmiles(smiles) is None:
         return {
             "_success": False,
@@ -157,7 +157,7 @@ def run_optimization(smiles: str, target_property: str) -> dict:
             "_elapsed": 0,
         }
     
-    # Step 1: Search PubChem analogues
+    # Étape 1 : Recherche d'analogues PubChem
     with st.spinner("Searching PubChem analogues..."):
         similarity_result = find_similar_molecules.invoke({
             "smiles": smiles,
@@ -181,7 +181,7 @@ def run_optimization(smiles: str, target_property: str) -> dict:
             "_elapsed": time.time() - start_time,
         }
     
-    # Step 2: LLM analysis
+    # Étape 2 : Analyse par le LLM (demande de JSON strict)
     compact_list = []
     for a in analogues[:5]:
         compact_list.append(
@@ -196,18 +196,26 @@ def run_optimization(smiles: str, target_property: str) -> dict:
             "content": (
                 f"Target molecule: SMILES={smiles}\n\n"
                 f"5 real PubChem analogues:\n{compact_text}\n\n"
-                f"⚠️ ABSOLUTE RULE: You must ONLY cite the following CIDs: "
-                f"{cid_list}. NEVER invent another CID.\n\n"
-                f"TASK: Propose 2 structural modifications of the target molecule.\n\n"
-                f"MANDATORY FORMAT for each modification:\n"
-                f"Modification N:\n"
-                f"- Description: [text]\n"
-                f"- Modified SMILES: [valid and complete SMILES]\n"
-                f"- PubChem reference: CID [number]\n"
-                f"- Observed property: [value]\n"
-                f"- Expected impact: [text]\n\n"
-                f"You MUST provide a valid SMILES for each modification. "
-                f"Without SMILES, your response will be rejected. Be CONCISE: maximum 250 words."
+                f"⚠️ ABSOLUTE RULE: You must ONLY cite the following CIDs: {cid_list}.\n\n"
+                f"TASK: Propose 2 structural modifications of the target molecule.\n"
+                f"You MUST respond ONLY with a valid JSON array. Do not include markdown blocks like ```json.\n"
+                f"Format your response exactly like this:\n"
+                f"[\n"
+                f"  {{\n"
+                f"    \"description\": \"text\",\n"
+                f"    \"modified_smiles\": \"valid SMILES string\",\n"
+                f"    \"pubchem_cid\": \"number\",\n"
+                f"    \"observed_property\": \"text\",\n"
+                f"    \"expected_impact\": \"text\"\n"
+                f"  }},\n"
+                f"  {{\n"
+                f"    \"description\": \"text\",\n"
+                f"    \"modified_smiles\": \"valid SMILES string\",\n"
+                f"    \"pubchem_cid\": \"number\",\n"
+                f"    \"observed_property\": \"text\",\n"
+                f"    \"expected_impact\": \"text\"\n"
+                f"  }}\n"
+                f"]"
             )
         }
     ]
@@ -225,18 +233,41 @@ def run_optimization(smiles: str, target_property: str) -> dict:
         response = llm_direct.invoke(followup_messages)
         analysis_text = response.content if hasattr(response, 'content') else str(response)
     
-    # Step 3: Extract modified SMILES
-    smiles_pattern = r'SMILES\s+modifi[ée][^\n:]*:\s*[`\'"]?([A-Za-z0-9@+\-\[\]\(\)=#$\\/%.]+)'
+    # Étape 3 : Extraction des SMILES (Méthode ultra-robuste)
     modified_smiles_list = []
-    for s in re.findall(smiles_pattern, analysis_text, re.IGNORECASE):
-        s = s.strip().rstrip('.,;:)`\'"')
-        if Chem.MolFromSmiles(s) is not None:
-            modified_smiles_list.append(s)
     
-    # Step 4: Compute SAscore
+    try:
+        # 1. Essayer de trouver un bloc JSON valide
+        json_match = re.search(r'\[[\s\S]*\]', analysis_text)
+        if json_match:
+            json_str = json_match.group(0)
+            data = json.loads(json_str)
+            for item in data:
+                s = item.get("modified_smiles", "").strip()
+                if Chem.MolFromSmiles(s) is not None:
+                    modified_smiles_list.append(s)
+        else:
+            raise ValueError("No JSON array found")
+            
+    except Exception as e:
+        print(f"JSON parsing failed, using fallback. Error: {e}")
+        # 2. Méthode de secours : chercher n'importe quelle ligne avec "SMILES"
+        for line in analysis_text.split('\n'):
+            if "SMILES" in line.upper() and ":" in line:
+                potential_smiles = line.split(":", 1)[1]
+                # Nettoyage agressif des astérisques Markdown (**) et backticks (`)
+                s = potential_smiles.strip().strip('*`\'".,;:) ')
+                if Chem.MolFromSmiles(s) is not None:
+                    modified_smiles_list.append(s)
+
+    # Supprimer les doublons
+    modified_smiles_list = list(dict.fromkeys(modified_smiles_list))
+    
+    # Étape 4 : Calcul des SAscore
     sa_results = []
     for i, mod_smiles in enumerate(modified_smiles_list, 1):
         sa_result = compute_sa_score.invoke({"smiles": mod_smiles})
+        
         if "error" not in sa_result:
             sa_score = sa_result.get("sa_score")
             if sa_score <= 3:
@@ -245,6 +276,7 @@ def run_optimization(smiles: str, target_property: str) -> dict:
                 verdict = "⚠️ Moderate"
             else:
                 verdict = "❌ Difficult"
+                
             sa_results.append({
                 "index": i,
                 "smiles": mod_smiles,
@@ -834,7 +866,8 @@ FINAL RESPONSE
             with col2:
                 st.metric("🧬 Analogues found", len(result.get("analogues", [])))
             with col3:
-                st.metric("✏️ Modifications", len(result.get("modified_smiles", [])))
+                # On utilise sa_results pour le compteur final, plus fiable
+                st.metric("✏️ Modifications", len(result.get("sa_results", [])))
             
             # PubChem analogues
             st.markdown("#### 🧬 Real PubChem Analogues")
@@ -851,7 +884,26 @@ FINAL RESPONSE
             # LLM analysis
             st.markdown("#### 🤖 LLM Analysis")
             st.markdown('<div class="optimization-box">', unsafe_allow_html=True)
-            st.markdown(result.get("analysis_text", ""))
+            
+            # Parser le JSON pour l'afficher proprement
+            analysis_text = result.get("analysis_text", "")
+            try:
+                clean_text = analysis_text.strip().strip('`').strip()
+                if clean_text.startswith('json'):
+                    clean_text = clean_text[4:].strip()
+                
+                data = json.loads(clean_text)
+                for i, item in enumerate(data, 1):
+                    st.markdown(f"**Modification {i}:**")
+                    st.markdown(f"- **Description:** {item.get('description', 'N/A')}")
+                    st.markdown(f"- **Modified SMILES:** `{item.get('modified_smiles', 'N/A')}`")
+                    st.markdown(f"- **PubChem Reference:** CID {item.get('pubchem_cid', 'N/A')}")
+                    st.markdown(f"- **Observed Property:** {item.get('observed_property', 'N/A')}")
+                    st.markdown(f"- **Expected Impact:** {item.get('expected_impact', 'N/A')}")
+                    st.markdown("---")
+            except Exception:
+                st.markdown(analysis_text)
+                
             st.markdown('</div>', unsafe_allow_html=True)
             
             # SAscore
@@ -899,7 +951,7 @@ FINAL RESPONSE
                 st.metric("🎯 Predicted value", f"{result['predicted_logS']} logS")
             with col3:
                 st.metric("📊 CI width", f"{result['interval_width']} logS")
-            
+
             st.markdown('<div class="uq-box">', unsafe_allow_html=True)
             st.markdown(f"#### Aqueous Solubility Prediction")
             st.markdown(f"**Predicted value:** {result['predicted_logS']} logS")
@@ -918,4 +970,52 @@ FINAL RESPONSE
                 desc = result["descriptors"]
                 
                 desc_display = {
-                    "Molecular weight (Da)": desc.get }
+                    "Molecular weight (Da)": desc.get("MolWt", "N/A"),
+                    "LogP (MolLogP)": desc.get("MolLogP", "N/A"),
+                    "TPSA (Å²)": desc.get("TPSA", "N/A"),
+                    "H-bond donors": desc.get("NumHDonors", "N/A"),
+                    "H-bond acceptors": desc.get("NumHAcceptors", "N/A"),
+                    "Rotatable bonds": desc.get("NumRotatableBonds", "N/A"),
+                    "Ring count": desc.get("RingCount", "N/A"),
+                    "Heavy atoms": desc.get("HeavyAtomCount", "N/A"),
+                    "Fraction Csp3": desc.get("FractionCSP3", "N/A"),
+                    "Aromatic rings": desc.get("NumAromaticRings", "N/A"),
+                }
+                
+                # Arrondir les valeurs flottantes
+                desc_display = {
+                    k: round(v, 3) if isinstance(v, float) else v
+                    for k, v in desc_display.items()
+                }
+                
+                # Affichage en 2 colonnes de métriques
+                items = list(desc_display.items())
+                mid = (len(items) + 1) // 2
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    for k, v in items[:mid]:
+                        st.metric(k, v)
+                with col2:
+                    for k, v in items[mid:]:
+                        st.metric(k, v)
+        else:
+            st.error(f"❌ Error: {result.get('_error', 'Unknown error')}")
+
+
+# ============================================================
+# HISTORY
+# ============================================================
+
+if st.session_state.history:
+    st.markdown("---")
+    st.markdown("### 📚 Session History")
+    
+    for h in reversed(st.session_state.history[-10:]):
+        status = "✅" if h["success"] else "❌"
+        st.markdown(
+            f"{status} **{h['timestamp']}** · "
+            f"`{h['input'][:50]}{'...' if len(h['input']) > 50 else ''}` · "
+            f"{h['mode']} · "
+            f"{h['elapsed']:.1f}s"
+        )
